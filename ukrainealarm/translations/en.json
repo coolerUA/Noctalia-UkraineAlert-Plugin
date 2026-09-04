@@ -3,6 +3,11 @@
   "settings.api_token.description": "Leave empty to use the public AJAX status API instead (no key needed, rate-limited to ~1 request/15s, shared across every instance of this widget). Request a token via the form on api.ukrainealarm.com to use that API instead.",
   "settings.poll_seconds.label": "Refresh interval (seconds)",
   "settings.poll_seconds.description": "How often to poll the alert status. With no API token (public API), this is floored at 15s regardless of what you set here.",
+  "settings.primary_output.label": "Primary output (optional)",
+  "settings.primary_output.description": "Optional. Set a connector name (e.g. eDP-1) to make only the widget instance on that output actually poll the API. Instances on every other output stop fetching and just mirror that instance's last result for the same region - useful with a mirrored/multi-monitor bar so you're not polling twice for no reason. Leave empty for the old behavior: every instance fetches independently.",
+
+  "widget.mirror_waiting": "Waiting for the primary output's first result\u2026",
+  "widget.mirror_stale": "No recent update from the primary output. Right-click for settings.",
   "settings.region_id.label": "Region ID (ukrainealarm.com)",
   "settings.region_id.description": "Only used when an API token is set in the plugin's settings. Find it via GET https://api.ukrainealarm.com/api/v3/regions (with your token) and pick the oblast/raion/community id for this widget instance to watch.",
   "settings.ajax_region.label": "Region (public API)",

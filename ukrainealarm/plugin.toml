@@ -1,6 +1,6 @@
 id           = "coolerUA/ukrainealarm"
 name         = "Ukraine Air Alert"
-version      = "2.1.2"
+version      = "2.2.0"
 plugin_api   = 12
 author       = "coolerUA"
 license      = "MIT"
@@ -25,6 +25,13 @@ description_key = "settings.poll_seconds.description"
 default   = 30
 min       = 10
 max       = 300
+
+[[setting]]
+key       = "primary_output"
+type      = "string"
+label_key = "settings.primary_output.label"
+description_key = "settings.primary_output.description"
+default   = ""
 
 [[widget]]
 id    = "alert"

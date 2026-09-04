@@ -1,9 +1,5 @@
 # Ukraine Air Alert — Noctalia bar widget
 
-[![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
-![License](https://img.shields.io/badge/License-MIT-yellow)
-[![StandWithUkraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
-
 Port of the idea behind [Gnome-UkraineAlert-Plugin](https://github.com/coolerUA/Gnome-UkraineAlert-Plugin)
 to Noctalia's v5+ Luau plugin system. Shows a green shield when your chosen
 region is clear and a red alert glyph with the active-alert count when it
@@ -71,6 +67,20 @@ Settings → Plugins) and apply to **every** instance of the widget:
   regions instead of just oblasts.
 - **Refresh interval** — defaults to 30s; floored at 15s with no token
   (public API rate limit) or 10s with one.
+- **Primary output** — optional. Only relevant on a multi-monitor setup
+  where you place this widget on more than one bar (e.g. a mirrored bar
+  layout). Set it to one output's connector name (`eDP-1`, `HDMI-A-1`,
+  etc. — check with `hyprctl monitors` / `niri msg outputs` / your
+  compositor's equivalent) and only the instance running on that output
+  will actually poll the API; every other instance for the *same region*
+  just mirrors its last result instead of polling independently. Leave
+  empty (the default) for the old behavior where every instance fetches on
+  its own.
+  - If you'd rather a secondary monitor not show this widget **at all**
+    instead of mirroring, that's a Noctalia bar setting, not this plugin —
+    give that monitor a `[bar.<name>.monitor.<match>]` override with its
+    own `start`/`center`/`end` list that omits this widget. See
+    [Noctalia's bar docs](https://docs.noctalia.dev/noctalia/bar/#per-monitor-overrides).
 
 Which region *this instance* watches is set per widget instance — right-click
 the bar badge (or find it under the widget's own settings where you added it

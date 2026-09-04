@@ -29,6 +29,8 @@ local REGION_NAMES = {
 
 local AJAX_MIN_INTERVAL_MS = 15000 -- hard floor: public API is rate-limited
 local AJAX_STATE_KEY = "ajax_last_request_ms" -- shared across every instance
+local STATUS_STATE_PREFIX = "status:" -- + backend + ":" + regionId, for output mirroring
+local MIRROR_STALE_MS = 5 * 60 * 1000 -- treat a mirrored status older than this as stale
 
 -- Tiny deterministic string hash, used to jitter each instance's poll phase
 -- so identically-configured instances don't stay locked in perfect sync
@@ -88,6 +90,32 @@ local function applyState(kind, text, tooltip)
   barWidget.setTooltip(tooltip)
 end
 
+local function isPrimaryOutput()
+  local primaryOutput = noctalia.getConfig("primary_output")
+  if primaryOutput == nil or primaryOutput == "" then
+    return true -- not configured: no restriction, every instance fetches independently
+  end
+  return barWidget.outputName() == primaryOutput
+end
+
+local function statusKey(backendTag, regionId)
+  return STATUS_STATE_PREFIX .. backendTag .. ":" .. regionId
+end
+
+local function publishStatus(backendTag, regionId, isActive, name, detail)
+  local ok, encoded = pcall(function()
+    return noctalia.json.encode({
+      active = isActive,
+      name = name,
+      detail = detail,
+      updatedAtMs = noctalia.nowMs(),
+    })
+  end)
+  if ok then
+    noctalia.state.set(statusKey(backendTag, regionId), encoded)
+  end
+end
+
 local function reportAlertState(isActive, statusText)
   if isActive then
     applyState("alert", "!", statusText)
@@ -144,11 +172,15 @@ local function fetchViaToken(token, regionId)
           table.insert(kindList, k)
         end
         local statusText = noctalia.trp("widget.alert_count", #activeAlerts, { region = regionName })
+        local detail = statusText .. "\n" .. table.concat(kindList, ", ")
         noctalia.log("ukrainealarm[" .. regionId .. "]: active=true (" .. table.concat(kindList, ", ") .. ")")
-        reportAlertState(true, statusText .. "\n" .. table.concat(kindList, ", "))
+        reportAlertState(true, detail)
+        publishStatus("token", regionId, true, regionName, detail)
       else
+        local detail = noctalia.tr("widget.clear", { region = regionName })
         noctalia.log("ukrainealarm[" .. regionId .. "]: active=false")
-        reportAlertState(false, noctalia.tr("widget.clear", { region = regionName }))
+        reportAlertState(false, detail)
+        publishStatus("token", regionId, false, regionName, detail)
       end
     end)
 
@@ -205,9 +237,13 @@ local function fetchViaAjax(ajaxRegionId)
       noctalia.log("ukrainealarm(ajax)[" .. ajaxRegionId .. "]: active=" .. tostring(isActive) .. " (" .. #data.alarms .. " alarms in response)")
 
       if isActive then
-        reportAlertState(true, noctalia.trp("widget.alert_count", 1, { region = regionName }))
+        local detail = noctalia.trp("widget.alert_count", 1, { region = regionName })
+        reportAlertState(true, detail)
+        publishStatus("ajax", ajaxRegionId, true, regionName, detail)
       else
-        reportAlertState(false, noctalia.tr("widget.clear", { region = regionName }))
+        local detail = noctalia.tr("widget.clear", { region = regionName })
+        reportAlertState(false, detail)
+        publishStatus("ajax", ajaxRegionId, false, regionName, detail)
       end
     end)
 
@@ -216,6 +252,54 @@ local function fetchViaAjax(ajaxRegionId)
       applyState("error", "?", noctalia.tr("widget.parse_error"))
     end
   end)
+end
+
+local function mirrorStatus()
+  local token = noctalia.getConfig("api_token")
+  local hasToken = token ~= nil and token ~= ""
+  local backendTag, regionId
+
+  if hasToken then
+    regionId = noctalia.getConfig("region_id")
+    backendTag = "token"
+    if regionId == nil or regionId == "" then
+      applyState("unconfigured", "", noctalia.tr("widget.unconfigured_region_id"))
+      return
+    end
+  else
+    regionId = noctalia.getConfig("ajax_region")
+    backendTag = "ajax"
+    if regionId == nil or regionId == "" or regionId == "0" then
+      applyState("unconfigured", "", noctalia.tr("widget.unconfigured_ajax_region"))
+      return
+    end
+  end
+
+  local raw = noctalia.state.get(statusKey(backendTag, regionId))
+  if raw == nil then
+    applyState("pending", "", noctalia.tr("widget.mirror_waiting"))
+    return
+  end
+
+  local ok, data = pcall(function()
+    return noctalia.json.decode(raw)
+  end)
+  if not ok or data == nil or type(data) ~= "table" then
+    applyState("pending", "", noctalia.tr("widget.mirror_waiting"))
+    return
+  end
+
+  local ageMs = noctalia.nowMs() - (data.updatedAtMs or 0)
+  if ageMs > MIRROR_STALE_MS then
+    applyState("error", "?", noctalia.tr("widget.mirror_stale"))
+    return
+  end
+
+  if data.active then
+    applyState("alert", "!", data.detail or "")
+  else
+    applyState("clear", "", data.detail or "")
+  end
 end
 
 local function fetchStatus()
@@ -268,12 +352,23 @@ function update()
   local jitterMs = simpleHash(jitterSeed) % 5000
 
   noctalia.setUpdateInterval(math.max(pollSeconds, minInterval) * 1000 + jitterMs)
-  fetchStatus()
+
+  if isPrimaryOutput() then
+    fetchStatus()
+  else
+    mirrorStatus() -- no network request; just reflect the primary output's last result
+  end
 end
 
 function onClick()
-  -- Manual refresh. Still subject to the AJAX backend's rate limit above.
-  fetchStatus()
+  -- Manual refresh. Mirror instances re-read the shared state instead of
+  -- fetching (only the primary output ever hits the network); still subject
+  -- to the AJAX backend's rate limit when this is the primary.
+  if isPrimaryOutput() then
+    fetchStatus()
+  else
+    mirrorStatus()
+  end
 end
 
 function onRightClick()
