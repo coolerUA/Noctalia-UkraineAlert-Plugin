@@ -1,0 +1,11 @@
+[[plugin]]
+id          = "coolerUA/ukrainealarm"
+name        = "Ukraine Air Alert"
+version     = "2.1.2"
+author      = "coolerUA"
+license     = "MIT"
+icon        = "alert-triangle"
+description = "Shows air raid alert status for a region as a bar badge, via api.ukrainealarm.com or the public AJAX status API. Add the widget again to watch another region."
+deprecated  = false
+plugin_api  = 12
+tags        = ["bar", "indicator"]

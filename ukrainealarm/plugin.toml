@@ -1,0 +1,87 @@
+id           = "coolerUA/ukrainealarm"
+name         = "Ukraine Air Alert"
+version      = "2.1.2"
+plugin_api   = 12
+author       = "coolerUA"
+license      = "MIT"
+repository   = "https://github.com/coolerUA/Noctalia-UkraineAlert-Plugin"
+icon         = "alert-triangle"
+description  = "Shows air raid alert status for a region as a bar badge, via api.ukrainealarm.com or the public AJAX status API. Add the widget again to watch another region."
+tags         = ["Bar"]
+
+# Shared across every instance of this widget.
+[[setting]]
+key       = "api_token"
+type      = "string"
+label_key = "settings.api_token.label"
+description_key = "settings.api_token.description"
+default   = ""
+
+[[setting]]
+key       = "poll_seconds"
+type      = "int"
+label_key = "settings.poll_seconds.label"
+description_key = "settings.poll_seconds.description"
+default   = 30
+min       = 10
+max       = 300
+
+[[widget]]
+id    = "alert"
+entry = "widget.luau"
+# No [widget.actions] declared: onClick/onRightClick below fire by default
+# unless the user rebinds a gesture in the bar widget's own settings.
+# (Middle click is reserved by Noctalia to open this widget's settings.)
+
+  # --- Per-instance region pickers ---
+  # Add this widget to the bar again (Settings -> Bar -> add widget ->
+  # Ukraine Air Alert) to watch another region; each instance gets its own
+  # copy of these two settings.
+
+  # Used for the public API (no token set): a real dropdown, no ids to look up.
+  [[widget.setting]]
+  key       = "ajax_region"
+  type      = "select"
+  label_key = "settings.ajax_region.label"
+  description_key = "settings.ajax_region.description"
+  default   = "0"
+    options = [
+      { value = "0", label_key = "settings.ajax_region.opt.unset" },
+      { value = "3", label_key = "settings.ajax_region.opt.3" },
+      { value = "4", label_key = "settings.ajax_region.opt.4" },
+      { value = "5", label_key = "settings.ajax_region.opt.5" },
+      { value = "8", label_key = "settings.ajax_region.opt.8" },
+      { value = "9", label_key = "settings.ajax_region.opt.9" },
+      { value = "10", label_key = "settings.ajax_region.opt.10" },
+      { value = "11", label_key = "settings.ajax_region.opt.11" },
+      { value = "12", label_key = "settings.ajax_region.opt.12" },
+      { value = "13", label_key = "settings.ajax_region.opt.13" },
+      { value = "14", label_key = "settings.ajax_region.opt.14" },
+      { value = "15", label_key = "settings.ajax_region.opt.15" },
+      { value = "16", label_key = "settings.ajax_region.opt.16" },
+      { value = "17", label_key = "settings.ajax_region.opt.17" },
+      { value = "18", label_key = "settings.ajax_region.opt.18" },
+      { value = "19", label_key = "settings.ajax_region.opt.19" },
+      { value = "20", label_key = "settings.ajax_region.opt.20" },
+      { value = "21", label_key = "settings.ajax_region.opt.21" },
+      { value = "22", label_key = "settings.ajax_region.opt.22" },
+      { value = "23", label_key = "settings.ajax_region.opt.23" },
+      { value = "24", label_key = "settings.ajax_region.opt.24" },
+      { value = "25", label_key = "settings.ajax_region.opt.25" },
+      { value = "26", label_key = "settings.ajax_region.opt.26" },
+      { value = "27", label_key = "settings.ajax_region.opt.27" },
+      { value = "28", label_key = "settings.ajax_region.opt.28" },
+      { value = "31", label_key = "settings.ajax_region.opt.31" },
+      { value = "564", label_key = "settings.ajax_region.opt.564" },
+      { value = "1293", label_key = "settings.ajax_region.opt.1293" },
+      { value = "9999", label_key = "settings.ajax_region.opt.9999" },
+    ]
+
+  # Used for the ukrainealarm.com backend (token set). No fixed list is
+  # available without calling the API, so this stays free text.
+  [[widget.setting]]
+  key       = "region_id"
+  type      = "string"
+  label_key = "settings.region_id.label"
+  description_key = "settings.region_id.description"
+  default   = ""
