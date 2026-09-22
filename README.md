@@ -2,8 +2,9 @@
 
 Port of the idea behind [Gnome-UkraineAlert-Plugin](https://github.com/coolerUA/Gnome-UkraineAlert-Plugin)
 to Noctalia's v5+ Luau plugin system. Shows a green shield when your chosen
-region is clear and a red alert glyph with the active-alert count when it
-isn't, polling api.ukrainealarm.com or the public AJAX status API.
+region is clear, a yellow outline triangle for a **yellow** (threat warning)
+alert and a filled red badge for a **red** (air raid) alert, polling
+api.ukrainealarm.com or the public AJAX status API.
 
 **Watching more than one region?** Region selection is a *per-widget-instance*
 setting, not a plugin-wide one — add the widget to the bar again
@@ -92,14 +93,30 @@ in Settings → Bar):
 - **Token set** → **Region ID (ukrainealarm.com)**: free text, since that API
   has no fixed enumerable list without a key. Get it via
   `GET https://api.ukrainealarm.com/api/v3/regions` with your token.
+- **Alert scope (public API only)** — the public API's response for an
+  oblast also lists alerts declared for districts/communities *inside* it.
+  **Whole region only** (default) ignores those and lights up only for an
+  alert covering the picked region itself. **Include districts** counts them
+  too, so the badge reacts when any part of the region is under alert (for
+  frontline oblasts that can mean it's red most of the time).
 
 ## Behavior
 
 - Left click: force an immediate refresh (still subject to the public API's
   rate limit when no token is set — see below).
 - Right click: open the plugin's settings.
-- A notification fires when the region transitions between clear and alert
-  (both directions).
+- Two alert levels, as reported by both APIs:
+  - **Red** — air raid alert (sirens), take shelter. Filled red triangle with
+    a `!` badge.
+  - **Yellow** — threat warning / pre-alert, be ready. Yellow outline
+    triangle, no badge text.
+  - Alerts the API reports without a level (artillery, urban fights, …) count
+    as red; informational `INFO`/`CUSTOM` messages without a level count as
+    yellow. When several alerts overlap, the worst level wins.
+  - The tooltip lists the level, the alert count, the alert types and (with a
+    token) the reason text the API attaches to the level.
+- A notification fires on every transition between clear, yellow and red —
+  including yellow → red escalations and red → yellow downgrades.
 - Unconfigured (no region picked yet) shows a gear glyph instead of erroring.
 
 ## Notes / things you may want to change
@@ -111,9 +128,11 @@ in Settings → Bar):
   therefore means each instance's badge updates roughly once every
   `15s × number of public-API instances`, since they take turns through the
   shared limit rather than all polling every 15s.
-- The public API only resolves to oblast granularity — 24 oblasts plus
-  Kyiv/Zaporizhzhia/Kharkiv city and Crimea. ukrainealarm.com supports
-  raion- and community-level regions if you need finer than that.
+- The public API's region *picker* only offers oblast granularity — 24
+  oblasts plus Kyiv/Zaporizhzhia/Kharkiv city and Crimea — though its
+  response does include district-level alerts inside the picked oblast (see
+  **Alert scope** above). ukrainealarm.com lets you watch a raion or
+  community directly if you need finer than that.
 - `plugin_api = 12` is set conservatively; bump it in `plugin.toml` (and the
   matching row in the repo's `catalog.toml`) if you add features from a
   newer API level later.

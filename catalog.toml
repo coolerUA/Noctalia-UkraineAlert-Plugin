@@ -1,7 +1,7 @@
 [[plugin]]
 id          = "coolerUA/ukrainealarm"
 name        = "Ukraine Air Alert"
-version     = "2.2.0"
+version     = "2.3.0"
 author      = "coolerUA"
 license     = "MIT"
 icon        = "alert-triangle"

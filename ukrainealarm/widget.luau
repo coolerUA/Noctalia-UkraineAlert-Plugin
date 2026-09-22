@@ -13,6 +13,12 @@
 --      enforced here via noctalia.state, which is shared across every
 --      instance of this widget, so adding more regions doesn't multiply the
 --      effective request rate against the shared limit.
+--
+-- Both backends now report an alert *level* alongside the alert type:
+--   red    - full air raid alert (sirens), take shelter
+--   yellow - threat warning / pre-alert, be ready
+-- Alerts with no level attached (artillery, urban fights, ...) are treated as
+-- red; informational ones (INFO/CUSTOM) with no level are treated as yellow.
 
 local REGION_NAMES = {
   ["3"] = "Khmelnytskyi", ["4"] = "Vinnytsia", ["5"] = "Rivne",
@@ -32,6 +38,10 @@ local AJAX_STATE_KEY = "ajax_last_request_ms" -- shared across every instance
 local STATUS_STATE_PREFIX = "status:" -- + backend + ":" + regionId, for output mirroring
 local MIRROR_STALE_MS = 5 * 60 * 1000 -- treat a mirrored status older than this as stale
 
+-- Alert types that are advisories rather than sirens. When the API attaches
+-- no explicit level to one of these, it counts as yellow instead of red.
+local ADVISORY_TYPES = { INFO = true, CUSTOM = true }
+
 -- Tiny deterministic string hash, used to jitter each instance's poll phase
 -- so identically-configured instances don't stay locked in perfect sync
 -- (which would let one permanently starve the other under the shared
@@ -44,7 +54,7 @@ local function simpleHash(s)
   return h
 end
 
-local lastStatusText = nil -- avoid redundant notifications
+local lastLevel = nil -- "clear" | "red" | "yellow"; avoids redundant notifications
 local hasEverRendered = false
 local fetching = false
 local fetchStartedAtMs = nil
@@ -61,13 +71,17 @@ local function endFetch()
 end
 
 local function applyState(kind, text, tooltip)
-  -- kind: "alert" | "clear" | "error" | "unconfigured" | "pending"
+  -- kind: "red" | "yellow" | "clear" | "error" | "unconfigured" | "pending"
   noctalia.log("ukrainealarm: applyState(" .. kind .. ")")
 
-  if kind == "alert" then
+  if kind == "red" then
     barWidget.setGlyph("alert-triangle-filled")
     barWidget.setGlyphColor("#E5484D")
     barWidget.setColor("#E5484D")
+  elseif kind == "yellow" then
+    barWidget.setGlyph("alert-triangle")
+    barWidget.setGlyphColor("#FFC53D")
+    barWidget.setColor("")
   elseif kind == "clear" then
     barWidget.setGlyph("shield-check")
     barWidget.setGlyphColor("#30A46C")
@@ -82,7 +96,7 @@ local function applyState(kind, text, tooltip)
     barWidget.setColor("")
   else -- error
     barWidget.setGlyph("help-circle")
-    barWidget.setGlyphColor("#F5A623")
+    barWidget.setGlyphColor("#8B8D98")
     barWidget.setColor("")
   end
 
@@ -102,10 +116,12 @@ local function statusKey(backendTag, regionId)
   return STATUS_STATE_PREFIX .. backendTag .. ":" .. regionId
 end
 
-local function publishStatus(backendTag, regionId, isActive, name, detail)
+-- level: "red" | "yellow" | nil (clear)
+local function publishStatus(backendTag, regionId, level, name, detail)
   local ok, encoded = pcall(function()
     return noctalia.json.encode({
-      active = isActive,
+      active = level ~= nil,
+      level = level,
       name = name,
       detail = detail,
       updatedAtMs = noctalia.nowMs(),
@@ -116,19 +132,76 @@ local function publishStatus(backendTag, regionId, isActive, name, detail)
   end
 end
 
-local function reportAlertState(isActive, statusText)
-  if isActive then
-    applyState("alert", "!", statusText)
-    if lastStatusText ~= "alert" then
+-- Map an API-provided level string ("Red"/"RED"/"Yellow"/...) to our
+-- canonical "red"/"yellow", or nil when absent/unknown.
+local function normalizeLevel(raw)
+  if type(raw) ~= "string" then
+    return nil
+  end
+  local u = string.upper(raw)
+  if u == "RED" then
+    return "red"
+  elseif u == "YELLOW" then
+    return "yellow"
+  end
+  return nil
+end
+
+-- Level implied by an alert that carries no explicit level of its own.
+local function impliedLevel(alertType)
+  if ADVISORY_TYPES[string.upper(tostring(alertType or ""))] then
+    return "yellow"
+  end
+  return "red"
+end
+
+-- Combine two levels, keeping the more severe one.
+local function worstLevel(a, b)
+  if a == "red" or b == "red" then
+    return "red"
+  elseif a == "yellow" or b == "yellow" then
+    return "yellow"
+  end
+  return nil
+end
+
+local function levelLabel(level)
+  if level == "red" then
+    return noctalia.tr("widget.level.red")
+  end
+  return noctalia.tr("widget.level.yellow")
+end
+
+-- Sorted, de-duplicated list of alert type names for the tooltip.
+local function kindList(kinds)
+  local list = {}
+  for k, _ in pairs(kinds) do
+    table.insert(list, k)
+  end
+  table.sort(list)
+  return list
+end
+
+-- level: "red" | "yellow" | nil (clear)
+local function reportAlertState(level, statusText)
+  if level == "red" then
+    applyState("red", "!", statusText)
+    if lastLevel ~= "red" then
       noctalia.notify(noctalia.tr("widget.alert_title"), statusText)
     end
-    lastStatusText = "alert"
+    lastLevel = "red"
+  elseif level == "yellow" then
+    applyState("yellow", "", statusText)
+    if lastLevel ~= "yellow" then
+      noctalia.notify(noctalia.tr("widget.yellow_title"), statusText)
+    end
+    lastLevel = "yellow"
   else
     applyState("clear", "", statusText)
-    if lastStatusText == "alert" then
+    if lastLevel == "red" or lastLevel == "yellow" then
       noctalia.notify(noctalia.tr("widget.clear_title"), statusText)
     end
-    lastStatusText = "clear"
+    lastLevel = "clear"
   end
 end
 
@@ -160,27 +233,44 @@ local function fetchViaToken(token, regionId)
 
       local region = data[1]
       local activeAlerts = region.activeAlerts or {}
-      local regionName = region.regionName or regionId
+      local regionName = region.regionEngName or region.regionName or regionId
 
       if #activeAlerts > 0 then
         local kinds = {}
+        local reasons = {}
+        local level = nil
         for _, a in ipairs(activeAlerts) do
           kinds[a.type or "UNKNOWN"] = true
+          -- v3 attaches zero or more {alertLevel, reason, createdAt} entries
+          -- per alert; take the worst one. No entries -> level implied by type.
+          local alertLevel = nil
+          for _, l in ipairs(a.activeAlertLevels or {}) do
+            alertLevel = worstLevel(alertLevel, normalizeLevel(l.alertLevel))
+            if l.reason ~= nil and l.reason ~= "" then
+              reasons[l.reason] = true
+            end
+          end
+          if alertLevel == nil then
+            alertLevel = impliedLevel(a.type)
+          end
+          level = worstLevel(level, alertLevel)
         end
-        local kindList = {}
-        for k, _ in pairs(kinds) do
-          table.insert(kindList, k)
-        end
+
         local statusText = noctalia.trp("widget.alert_count", #activeAlerts, { region = regionName })
-        local detail = statusText .. "\n" .. table.concat(kindList, ", ")
-        noctalia.log("ukrainealarm[" .. regionId .. "]: active=true (" .. table.concat(kindList, ", ") .. ")")
-        reportAlertState(true, detail)
-        publishStatus("token", regionId, true, regionName, detail)
+        local lines = { levelLabel(level), statusText, table.concat(kindList(kinds), ", ") }
+        local reasonList = kindList(reasons)
+        if #reasonList > 0 then
+          table.insert(lines, table.concat(reasonList, "; "))
+        end
+        local detail = table.concat(lines, "\n")
+        noctalia.log("ukrainealarm[" .. regionId .. "]: level=" .. level .. " (" .. table.concat(kindList(kinds), ", ") .. ")")
+        reportAlertState(level, detail)
+        publishStatus("token", regionId, level, regionName, detail)
       else
         local detail = noctalia.tr("widget.clear", { region = regionName })
-        noctalia.log("ukrainealarm[" .. regionId .. "]: active=false")
-        reportAlertState(false, detail)
-        publishStatus("token", regionId, false, regionName, detail)
+        noctalia.log("ukrainealarm[" .. regionId .. "]: level=clear")
+        reportAlertState(nil, detail)
+        publishStatus("token", regionId, nil, regionName, detail)
       end
     end)
 
@@ -226,24 +316,45 @@ local function fetchViaAjax(ajaxRegionId)
       end
 
       local regionName = REGION_NAMES[ajaxRegionId] or ("Region " .. ajaxRegionId)
-      local isActive = false
+      local includeChildren = noctalia.getConfig("alert_scope") == "children"
+
+      -- The response is already scoped to the requested region: an alarm
+      -- whose regionId matches is region-wide; any other id is a district /
+      -- community inside it (only counted with alert_scope = "children").
+      local level, kinds = nil, {}
+      local ownCount, childCount = 0, 0
       for _, alarm in ipairs(data.alarms) do
-        if tostring(alarm.regionId) == ajaxRegionId then
-          isActive = true
-          break
+        local isOwn = tostring(alarm.regionId) == ajaxRegionId
+        if isOwn or includeChildren then
+          local alarmLevel = normalizeLevel(alarm.alertLevel) or impliedLevel(alarm.alarmType)
+          level = worstLevel(level, alarmLevel)
+          kinds[alarm.alarmType or "UNKNOWN"] = true
+          if isOwn then
+            ownCount = ownCount + 1
+          else
+            childCount = childCount + 1
+          end
         end
       end
 
-      noctalia.log("ukrainealarm(ajax)[" .. ajaxRegionId .. "]: active=" .. tostring(isActive) .. " (" .. #data.alarms .. " alarms in response)")
+      noctalia.log("ukrainealarm(ajax)[" .. ajaxRegionId .. "]: level=" .. tostring(level) .. " own=" .. ownCount .. " children=" .. childCount .. " (" .. #data.alarms .. " alarms in response)")
 
-      if isActive then
-        local detail = noctalia.trp("widget.alert_count", 1, { region = regionName })
-        reportAlertState(true, detail)
-        publishStatus("ajax", ajaxRegionId, true, regionName, detail)
+      if level ~= nil then
+        local lines = { levelLabel(level) }
+        if ownCount > 0 then
+          table.insert(lines, noctalia.trp("widget.alert_count", ownCount, { region = regionName }))
+        end
+        if childCount > 0 then
+          table.insert(lines, noctalia.trp("widget.child_alert_count", childCount, { region = regionName }))
+        end
+        table.insert(lines, table.concat(kindList(kinds), ", "))
+        local detail = table.concat(lines, "\n")
+        reportAlertState(level, detail)
+        publishStatus("ajax", ajaxRegionId, level, regionName, detail)
       else
         local detail = noctalia.tr("widget.clear", { region = regionName })
-        reportAlertState(false, detail)
-        publishStatus("ajax", ajaxRegionId, false, regionName, detail)
+        reportAlertState(nil, detail)
+        publishStatus("ajax", ajaxRegionId, nil, regionName, detail)
       end
     end)
 
@@ -295,8 +406,16 @@ local function mirrorStatus()
     return
   end
 
-  if data.active then
-    applyState("alert", "!", data.detail or "")
+  -- Status published by an older version has `active` but no `level`.
+  local level = normalizeLevel(data.level)
+  if level == nil and data.active then
+    level = "red"
+  end
+
+  if level == "red" then
+    applyState("red", "!", data.detail or "")
+  elseif level == "yellow" then
+    applyState("yellow", "", data.detail or "")
   else
     applyState("clear", "", data.detail or "")
   end

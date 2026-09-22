@@ -1,6 +1,6 @@
 id           = "coolerUA/ukrainealarm"
 name         = "Ukraine Air Alert"
-version      = "2.2.0"
+version      = "2.3.0"
 plugin_api   = 12
 author       = "coolerUA"
 license      = "MIT"
@@ -82,6 +82,20 @@ entry = "widget.luau"
       { value = "564", label_key = "settings.ajax_region.opt.564" },
       { value = "1293", label_key = "settings.ajax_region.opt.1293" },
       { value = "9999", label_key = "settings.ajax_region.opt.9999" },
+    ]
+
+  # Public API only. The response for an oblast also lists alerts declared
+  # for districts/communities inside it; by default those are ignored and
+  # only an alert covering the whole picked region counts.
+  [[widget.setting]]
+  key       = "alert_scope"
+  type      = "select"
+  label_key = "settings.alert_scope.label"
+  description_key = "settings.alert_scope.description"
+  default   = "region"
+    options = [
+      { value = "region", label_key = "settings.alert_scope.opt.region" },
+      { value = "children", label_key = "settings.alert_scope.opt.children" },
     ]
 
   # Used for the ukrainealarm.com backend (token set). No fixed list is
